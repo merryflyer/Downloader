@@ -34,7 +34,7 @@
         tools:text="TextView" />
 
     <Button
-        android:id="@+id/pause_resume_down"
+        android:id="@+id/pauseResumeDown"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_marginTop="16dp"

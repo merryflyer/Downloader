@@ -1,10 +1,14 @@
 package com.hl.downloader
 
+import android.util.Log
+
 /**
  * @Author  张磊  on  2020/11/04 at 20:47
  * Email: 913305160@qq.com
  */
 open class DownloadListener {
+
+    private val TAG = Constants.BASE_TAG + this.javaClass.simpleName
 
     /**
      * 下载错误
@@ -35,4 +39,22 @@ open class DownloadListener {
      * 注意：当前下载已完成或已取消，请求取消不会受到此通知
      */
     open fun downloadCancel() {}
+
+    open fun deal( downloadStatus: DownloadStatus,
+              error: Throwable? = null,
+              progress: String? = null,
+              downloadFilePath: String? = null){
+        Log.d(TAG, "下载状态 == $downloadStatus, 下载进度 == $progress")
+        when (downloadStatus) {
+            DownloadStatus.DOWNLOAD_ERROR -> downloadError(error)
+            DownloadStatus.DOWNLOADING -> downloadIng(progress ?: "")
+            DownloadStatus.DOWNLOAD_COMPLETE -> downloadComplete(downloadFilePath ?: "")
+            DownloadStatus.DOWNLOAD_PAUSE -> downloadPause()
+            DownloadStatus.DOWNLOAD_CANCEL -> {
+                downloadCancel()
+            }
+            else -> {
+            }
+        }
+    }
 }

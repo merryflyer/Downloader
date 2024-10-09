@@ -11,6 +11,7 @@ import kotlinx.coroutines.*
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.File
+import java.lang.ref.WeakReference
 import java.math.RoundingMode
 import java.net.HttpURLConnection
 import java.text.DecimalFormat
@@ -19,18 +20,19 @@ import java.text.DecimalFormat
  * @Author  张磊  on  2020/11/04 at 15:03
  * Email: 913305160@qq.com
  */
-internal class DownloadTask(
+class DownloadTask(
     private val context: Context,
     private val downloadUrl: String,
     private val maxDownloadCore: Int = 1,
     private val saveFilePath: String?,
-    private val exceptionHandler: CoroutineExceptionHandler? = null
+    private val exceptionHandler: CoroutineExceptionHandler? = null,
+    private var downloadListener: WeakReference<DownloadListener>?= null,
 ) {
 
     private val TAG = Constants.BASE_TAG + this.javaClass.simpleName
 
     private val subDownloadTasks = mutableListOf<SubDownloadTask>()
-    private var downloadListener: DownloadStatusListener? = DownloadStatusListener()
+    private var downloadStatusListener: DownloadStatusListener? = DownloadStatusListener(downloadListener)
 
     private lateinit var saveFile: File
     private var fileSize = 0L
@@ -49,14 +51,14 @@ internal class DownloadTask(
         if (!Patterns.WEB_URL.matcher(downloadUrl).matches()) {
             Log.d(TAG, "startDownload: 下载地址错误（${downloadUrl}），请检查后再尝试！")
 
-            downloadListener?.downloadStatusChange(DownloadStatus.DOWNLOAD_ERROR, error = Exception("下载地址错误"))
+            downloadStatusListener?.downloadStatusChange(DownloadStatus.DOWNLOAD_ERROR, error = Exception("下载地址错误"))
             return
         }
 
         //短时快速发起请求可能导致三次握手之后客户TCP的请求已关闭，产生 ECONNABORTED错误，需要对此情况处理
         val myCoroutineExceptionHandler = exceptionHandler ?: MyCoroutineExceptionHandler(errorPrint = {
             if (!isCanceled) {
-                downloadListener?.downloadStatusChange(DownloadStatus.DOWNLOAD_ERROR, it)
+                downloadStatusListener?.downloadStatusChange(DownloadStatus.DOWNLOAD_ERROR, it)
             }
         }, retryAction = {
             if (!isCanceled) {
@@ -88,7 +90,7 @@ internal class DownloadTask(
 
         if (saveFile.exists() && saveFile.length() == fileSize) {
             Log.d(TAG, "startDownload: 本地文件已经存在，下载完成！")
-            DownloadManager.downloadStatusChange(
+            downloadListener?.get()?.deal(
                 downloadStatus = DownloadStatus.DOWNLOAD_COMPLETE,
                 downloadFilePath = saveFile.path
             )
@@ -101,17 +103,17 @@ internal class DownloadTask(
                 HttpURLConnection.HTTP_PARTIAL -> {
                     //服务端支持断点续传
                     initPartialSubTask(saveFile)
-                    downloadListener = DownloadStatusListener()
+                    downloadStatusListener = DownloadStatusListener(downloadListener)
                 }
                 HttpURLConnection.HTTP_OK -> {
                     initSubTask(saveFile)
-                    downloadListener = DownloadStatusListener(false)
+                    downloadStatusListener = DownloadStatusListener(downloadListener, false)
                 }
                 else -> {
                     val errorReason = "请求的文件不支持下载， statusCode == $statusCode"
                     Log.d(TAG, "startDownload: $errorReason")
-                    downloadListener = null
-                    DownloadManager.downloadStatusChange(
+                    downloadStatusListener = null
+                    downloadListener?.get()?.deal(
                         DownloadStatus.DOWNLOAD_ERROR,
                         error = Exception(errorReason)
                     )
@@ -208,12 +210,12 @@ internal class DownloadTask(
 
     private fun startAsyncDownload() {
         if (subDownloadTasks.all { it.downloadStatus == DownloadStatus.DOWNLOAD_COMPLETE }) {
-            DownloadManager.downloadStatusChange(DownloadStatus.DOWNLOAD_COMPLETE, downloadFilePath = saveFile.path)
+            downloadListener?.get()?.deal(DownloadStatus.DOWNLOAD_COMPLETE, downloadFilePath = saveFile.path)
             return
         }
 
         subDownloadTasks.filterAndOperateEach({ this.downloadStatus != DownloadStatus.DOWNLOAD_COMPLETE }) {
-            it.startDownLoad(downloadListener)
+            it.startDownLoad(downloadStatusListener)
         }
     }
 
@@ -231,15 +233,15 @@ internal class DownloadTask(
         //所有任务已完成或者本地已下载完成无下载任务时 -----> 下载完成
         if (subDownloadTasks.all {
                 it.downloadStatus == DownloadStatus.DOWNLOAD_COMPLETE
-            } || (subDownloadTasks.isEmpty() && downloadListener != null)) {
-            DownloadManager.downloadStatusChange(
+            } || (subDownloadTasks.isEmpty() && downloadStatusListener != null)) {
+            downloadListener?.get()?.deal(
                 downloadStatus = DownloadStatus.DOWNLOAD_COMPLETE, downloadFilePath = saveFile.path
             )
             return
         }
 
         //恢复下载时如果文件不存在或者服务器不支持断点续传 需要重新下载
-        if (!saveFile.exists() || downloadListener?.needSaveTask == false) {
+        if (!saveFile.exists() || downloadStatusListener?.needSaveTask == false) {
             startDownload()
             return
         }
@@ -253,7 +255,7 @@ internal class DownloadTask(
         isCanceled = true
 
         if (subDownloadTasks.isEmpty() || subDownloadTasks.all { it.downloadStatus == DownloadStatus.DOWNLOAD_CANCEL }) {
-            DownloadManager.downloadStatusChange(downloadStatus = DownloadStatus.DOWNLOAD_CANCEL)
+            downloadListener?.get()?.deal(downloadStatus = DownloadStatus.DOWNLOAD_CANCEL)
         }
 
         subDownloadTasks.filterAndOperateEach({ this.downloadStatus != DownloadStatus.DOWNLOAD_CANCEL }) {
@@ -273,15 +275,20 @@ internal class DownloadTask(
         return returnValue
     }
 
-    private inner class DownloadStatusListener(val needSaveTask: Boolean = true) :
+    private inner class DownloadStatusListener(var downloadListener: WeakReference<DownloadListener>?= null,
+                                               val needSaveTask: Boolean = true) :
             OnDownloadStatusListener {
 
         private var  lastDownloadProgress = ""
 
+        private fun setListener(listener: WeakReference<DownloadListener>){
+            this.downloadListener = listener
+        }
+
         override fun downloadStatusChange(status: DownloadStatus, error: Throwable?) {
             when (status) {
                 DownloadStatus.DOWNLOAD_ERROR -> {
-                    DownloadManager.downloadStatusChange(status, error)
+                    downloadListener?.get()?.deal(status, error)
                 }
 
                 DownloadStatus.DOWNLOADING -> {
@@ -295,7 +302,7 @@ internal class DownloadTask(
                     val currentProgress = decimalFormat.format(sum * 100f / fileSize)
                     synchronized(lastDownloadProgress) {
                         if (currentProgress != lastDownloadProgress) {
-                            DownloadManager.downloadStatusChange(downloadStatus = status, progress = currentProgress)
+                            downloadListener?.get()?.deal(downloadStatus = status, progress = currentProgress)
                             lastDownloadProgress = currentProgress
                             saveSubDownLoadTasks(needSaveTask)
                         }
@@ -304,7 +311,7 @@ internal class DownloadTask(
 
                 DownloadStatus.DOWNLOAD_COMPLETE -> {
                     if (subDownloadTasks.all { it.downloadStatus == status }) {
-                        DownloadManager.downloadStatusChange(downloadStatus = status, downloadFilePath = saveFile.path)
+                        downloadListener?.get()?.deal(downloadStatus = status, downloadFilePath = saveFile.path)
                         saveSubDownLoadTasks(needSaveTask)
                     }
                 }
@@ -314,7 +321,7 @@ internal class DownloadTask(
                         }.all {
                             it.downloadStatus == status
                         }) {
-                        DownloadManager.downloadStatusChange(downloadStatus = status)
+                        downloadListener?.get()?.deal(downloadStatus = status)
                         saveSubDownLoadTasks(needSaveTask)
                     }
                 }
@@ -324,7 +331,7 @@ internal class DownloadTask(
                         }.all {
                             it.downloadStatus == status
                         }) {
-                        DownloadManager.downloadStatusChange(downloadStatus = status)
+                        downloadListener?.get()?.deal(downloadStatus = status)
                         //取消下载时，清空所有任务同时清除缓存的任务列表
                         subDownloadTasks.clear()
                         saveSubDownLoadTasks(needSaveTask)
