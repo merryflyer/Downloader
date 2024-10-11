@@ -17,6 +17,7 @@ import kotlinx.android.synthetic.main.activity_main.*
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.launch
+import java.lang.ref.SoftReference
 import java.lang.ref.WeakReference
 
 
@@ -98,7 +99,7 @@ class MainActivity : AppCompatActivity() {
          downloadTask = DownloadTask(this,
             downloadUrl,
             saveFilePath = saveFilePath,
-            downloadListener = WeakReference(getDownloadListener())
+            downloadListener = SoftReference(getDownloadListener())
         )
         downloadTask?.startDownload()
     }

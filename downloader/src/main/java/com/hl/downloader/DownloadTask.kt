@@ -11,6 +11,7 @@ import kotlinx.coroutines.*
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.File
+import java.lang.ref.SoftReference
 import java.lang.ref.WeakReference
 import java.math.RoundingMode
 import java.net.HttpURLConnection
@@ -26,7 +27,7 @@ class DownloadTask(
     private val maxDownloadCore: Int = 1,
     private val saveFilePath: String?,
     private val exceptionHandler: CoroutineExceptionHandler? = null,
-    private var downloadListener: WeakReference<DownloadListener>?= null,
+    private var downloadListener: SoftReference<DownloadListener>?= null,
 ) {
 
     private val TAG = Constants.BASE_TAG + this.javaClass.simpleName
@@ -275,13 +276,13 @@ class DownloadTask(
         return returnValue
     }
 
-    private inner class DownloadStatusListener(var downloadListener: WeakReference<DownloadListener>?= null,
+    private inner class DownloadStatusListener(var downloadListener: SoftReference<DownloadListener>?= null,
                                                val needSaveTask: Boolean = true) :
             OnDownloadStatusListener {
 
         private var  lastDownloadProgress = ""
 
-        private fun setListener(listener: WeakReference<DownloadListener>){
+        private fun setListener(listener: SoftReference<DownloadListener>){
             this.downloadListener = listener
         }
 
